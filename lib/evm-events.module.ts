@@ -18,4 +18,4 @@ import { EvmEventsService } from './evm-events.service';
   ],
   exports: [EvmEventsService],
 })
-export class EthereumEventsModule {}
+export class EvmEventsModule {}
