@@ -40,10 +40,7 @@ You can also see `.env.example` for all options.
 ```typescript
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
-import {
-  EvmEventsModule,
-  EvmEventsService,
-} from '@omnihash/nestjs-evm-events';
+import { EvmEventsModule, EvmEventsService } from '@omnihash/nestjs-evm-events';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 
@@ -59,10 +56,18 @@ const ERC20_ABI = [
 })
 export class AppModule {
   constructor(private readonly evmEventsService: EvmEventsService) {
-    this.evmEventsService.registerContract(ERC20_ADDRESS, ERC20_ABI, (event) => {
-      // Do stuff here
-      console.log('Event received:', event);
-    });
+    void this.run();
+  }
+
+  async run() {
+    await this.evmEventsService.registerContract(
+      ERC20_ADDRESS,
+      ERC20_ABI,
+      (event) => {
+        // Do stuff here
+        console.log('Event received:', event);
+      },
+    );
   }
 }
 ```
