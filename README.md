@@ -1,4 +1,4 @@
-# @omnihash/nestjs-ethereum-events
+# @omnihash/nestjs-evm-events
 
 A NestJS module for robust Ethereum event listening and contract interaction using [ethers.js](https://docs.ethers.org/).
 
@@ -9,9 +9,9 @@ A NestJS module for robust Ethereum event listening and contract interaction usi
 ## Installation
 
 ```bash
-npm install @omnihash/nestjs-ethereum-events ethers
+npm install @omnihash/nestjs-evm-events ethers
 # or
-yarn add @omnihash/nestjs-ethereum-events ethers
+yarn add @omnihash/nestjs-evm-events ethers
 ```
 
 ---
@@ -41,9 +41,9 @@ You can also see `.env.example` for all options.
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import {
-  EthereumEventsModule,
-  EthereumEventsService,
-} from '@omnihash/nestjs-ethereum-events';
+  EvmEventsModule,
+  EvmEventsService,
+} from '@omnihash/nestjs-evm-events';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 
@@ -53,13 +53,13 @@ const ERC20_ABI = [
 ];
 
 @Module({
-  imports: [EthereumEventsModule, ConfigModule],
+  imports: [EvmEventsModule, ConfigModule],
   controllers: [AppController],
   providers: [AppService],
 })
 export class AppModule {
-  constructor(private readonly ethersListener: EthereumEventsService) {
-    this.ethersListener.registerContract(ERC20_ADDRESS, ERC20_ABI, (event) => {
+  constructor(private readonly evmEventsService: EvmEventsService) {
+    this.evmEventsService.registerContract(ERC20_ADDRESS, ERC20_ABI, (event) => {
       // Do stuff here
       console.log('Event received:', event);
     });
@@ -73,7 +73,7 @@ export class AppModule {
 
 ### EthersModule
 
-- `EthersModule.forRoot()`  
+- `EvmEventsModule`  
   Loads configuration from `.env` and sets up the listener service.
 
 ### EthersListenerService

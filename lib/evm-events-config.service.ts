@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { EthersConfig } from './interfaces/ethers-config.interface';
 
 @Injectable()
-export class EthereumEventsConfigService {
+export class EvmEventsConfigService {
   constructor(private readonly configService: ConfigService) {}
 
   createConfig(): EthersConfig {

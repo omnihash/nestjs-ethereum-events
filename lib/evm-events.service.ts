@@ -11,8 +11,8 @@ import { EthersConfig } from './interfaces/ethers-config.interface';
 import { RegisteredContract } from './interfaces/registered-contract.interface';
 
 @Injectable()
-export class EthereumEventsService implements OnModuleInit, OnModuleDestroy {
-  private readonly logger = new Logger(EthereumEventsService.name);
+export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
+  private readonly logger = new Logger(EvmEventsService.name);
   private provider!: ethers.JsonRpcProvider | ethers.WebSocketProvider;
   private contracts = new Map<string, ethers.Contract>();
   private listeners = new Map<string, Array<() => void>>();

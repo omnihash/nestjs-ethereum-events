@@ -1,2 +1,2 @@
-export * from './ethereum-events.service';
-export * from './etthereum-events.module';
+export * from './evm-events.module';
+export * from './evm-events.service';
