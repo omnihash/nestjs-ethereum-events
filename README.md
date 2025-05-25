@@ -83,7 +83,49 @@ export class AppModule {
 
 ### EthersListenerService
 
-- `registerContract(address: string, abi: ethers.InterfaceAbi, callback?: (event) => void): void`
+- `registerContract(address: string, abi: ethers.InterfaceAbi, callback?: (event) => void): void`  
+  Register a contract to listen for all its events.
+
+- `getEventsInBlockRange(address: string, abi: ethers.InterfaceAbi, eventNameOrFragment: ethers.ContractEventName, startBlock: number, endBlock: number, increment = 1000): Promise<ethers.EventLog[]>`  
+  Fetch all events for a contract in a block range with automatic batching.
+
+### Example: Fetching Historical Events
+
+```typescript
+import { Injectable } from '@nestjs/common';
+import { EvmEventsService } from '@omnihash/nestjs-evm-events';
+
+@Injectable()
+export class YourService {
+  constructor(private readonly evmEventsService: EvmEventsService) {}
+
+  async fetchTransferEvents() {
+    const ERC20_ADDRESS = '0x6982508145454Ce325dDbE47a25d4ec3d2311933';
+    const ERC20_ABI = [
+      'event Transfer(address indexed from, address indexed to, uint256 value)',
+    ];
+
+    // Fetch all Transfer events from the last 1000 blocks
+    const currentBlock = await this.evmEventsService.provider.getBlockNumber();
+    const events = await this.evmEventsService.getEventsInBlockRange(
+      ERC20_ADDRESS,
+      ERC20_ABI,
+      '*', // '*' for all events or event name
+      currentBlock - 1000, // start block
+      currentBlock, // end block
+      100, // batch size (optional)
+    );
+
+    for (const event of events) {
+      console.log('Transfer:', {
+        from: event.args.from,
+        to: event.args.to,
+        value: event.args.value,
+      });
+    }
+  }
+}
+```
 
 ---
 
