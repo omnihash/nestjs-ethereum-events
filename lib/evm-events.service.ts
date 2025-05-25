@@ -547,8 +547,12 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
     startBlock: number,
     endBlock: number,
     increment = 1000,
-    args?: any[], // Optional indexed arguments for filtering
   ): Promise<ethers.Log[]> {
+    while (!this.provider) {
+      this.logger.warn('Provider not initialized yet, waiting...');
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+
     const contract = new ethers.Contract(address, abi, this.provider);
     const allEvents: ethers.Log[] = [];
     for (let i = startBlock; i <= endBlock; i += increment) {
