@@ -37,6 +37,9 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
     this.keepAliveInterval = config.keepAliveInterval || 15000; // 15 seconds
   }
 
+  /**
+   * Initialize module and setup provider connection
+   */
   async onModuleInit() {
     await this.initializeProvider();
     this.startHeartbeat();
@@ -44,10 +47,17 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
     this.startPeriodicReconnection();
   }
 
+  /**
+   * Clean up resources when module is destroyed
+   */
   onModuleDestroy() {
     this.cleanup();
   }
 
+  /**
+   * Initialize the Ethereum provider (WebSocket or JsonRpc)
+   * Sets up event handlers and tests the connection
+   */
   private async initializeProvider() {
     try {
       // Determine provider type based on URL
@@ -82,6 +92,10 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  /**
+   * Set up WebSocket event handlers for connection management
+   * Handles close, error, and open events
+   */
   private setupWebSocketEventHandlers() {
     if (this.provider instanceof ethers.WebSocketProvider) {
       // Handle WebSocket close
@@ -109,6 +123,10 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  /**
+   * Handle reconnection attempts with exponential backoff
+   * Manages reconnection state and retries
+   */
   private handleReconnection() {
     if (this.isReconnecting) return;
 
@@ -141,6 +159,10 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
     }, this.reconnectDelay * this.reconnectAttempts); // Exponential backoff
   }
 
+  /**
+   * Start heartbeat mechanism to monitor connection health
+   * Periodically checks connection by getting latest block number
+   */
   private startHeartbeat() {
     this.heartbeatTimer = setInterval(() => {
       void (async () => {
@@ -159,6 +181,10 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
     }, this.heartbeatInterval);
   }
 
+  /**
+   * Start keep-alive mechanism to prevent connection timeouts
+   * Periodically sends lightweight eth_chainId requests
+   */
   private startKeepAlive() {
     // Send periodic keep-alive requests to prevent connection timeout
     this.keepAliveTimer = setInterval(() => {
@@ -206,6 +232,10 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  /**
+   * Start periodic reconnection timer
+   * Forces a reconnection every 5 minutes to maintain fresh state
+   */
   private startPeriodicReconnection() {
     // Clear any existing timer
     if (this.reconnectionTimer) {
@@ -222,7 +252,10 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Register a contract with automatic reconnection support
+   * Register a contract to listen for all its events
+   * @param address Contract address
+   * @param abi Contract ABI
+   * @param callback Callback function that will be called for each event
    */
   async registerContract(
     address: string,
@@ -252,7 +285,11 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Register specific events with automatic reconnection support
+   * Register specific events from a contract
+   * @param address Contract address
+   * @param abi Contract ABI
+   * @param eventNames Array of event names to listen for
+   * @param callback Callback function that will be called for each event
    */
   registerSpecificEvents(
     address: string,
@@ -404,7 +441,8 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Manually trigger reconnection
+   * Force a reconnection to the provider
+   * Resets connection state and initiates reconnection process
    */
   forceReconnect() {
     this.logger.log('Forcing reconnection...');
@@ -414,7 +452,8 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Get connection status
+   * Get current connection and contract registration status
+   * @returns Object containing connection state and contract statistics
    */
   getConnectionStatus() {
     return {
@@ -427,7 +466,9 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Unregister contract
+   * Unregister a contract and remove all its event listeners
+   * @param address Contract address
+   * @returns true if contract was registered and successfully removed
    */
   unregisterContract(address: string): boolean {
     const normalized = address.toLowerCase();
@@ -487,5 +528,51 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
     }
 
     this.logger.log('PersistentEthersListenerService cleaned up');
+  }
+
+  /**
+   * Fetch all events for a contract in a block range (batched)
+   * @param address Contract address
+   * @param abi Contract ABI
+   * @param filter Event filter (e.g. contract.filters.Transfer(...))
+   * @param startBlock Start block number (inclusive)
+   * @param endBlock End block number (inclusive)
+   * @param increment Batch size (default: 1000)
+   * @returns Array of events
+   */
+  async getEventsInBlockRange(
+    address: string,
+    abi: ethers.InterfaceAbi,
+    eventNameOrFragment: string, // Accept event name or fragment
+    startBlock: number,
+    endBlock: number,
+    increment = 1000,
+    args?: any[], // Optional indexed arguments for filtering
+  ): Promise<ethers.Log[]> {
+    const contract = new ethers.Contract(address, abi, this.provider);
+    const allEvents: ethers.Log[] = [];
+    for (let i = startBlock; i <= endBlock; i += increment) {
+      const fromBlock = i;
+      const toBlock = Math.min(i + increment - 1, endBlock);
+      try {
+        this.logger.log(
+          `Querying events from block ${fromBlock} to ${toBlock}`,
+        );
+        // Use event name or fragment and optional indexed args
+        // If eventNameOrFragment is null or '*', fetch all events
+        const events = await contract.queryFilter(
+          eventNameOrFragment,
+          fromBlock,
+          toBlock,
+        );
+        allEvents.push(...(events as ethers.Log[]));
+      } catch (err) {
+        this.logger.error(
+          `Failed to fetch events for blocks ${fromBlock}-${toBlock}:`,
+          err,
+        );
+      }
+    }
+    return allEvents;
   }
 }
