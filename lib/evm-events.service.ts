@@ -13,7 +13,7 @@ import { RegisteredContract } from './interfaces/registered-contract.interface';
 @Injectable()
 export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(EvmEventsService.name);
-  public provider!: ethers.JsonRpcProvider | ethers.WebSocketProvider;
+  private provider!: ethers.JsonRpcProvider | ethers.WebSocketProvider;
   private contracts = new Map<string, ethers.Contract>();
   private listeners = new Map<string, Array<() => void>>();
   private registeredContracts = new Map<string, RegisteredContract>();

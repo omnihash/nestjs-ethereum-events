@@ -106,7 +106,7 @@ export class YourService {
     ];
 
     // Fetch all Transfer events from the last 1000 blocks
-    const currentBlock = await this.evmEventsService.provider.getBlockNumber();
+    const currentBlock = await yourJsonProvider.getBlockNumber();
     const events = await this.evmEventsService.getEventsInBlockRange(
       ERC20_ADDRESS,
       ERC20_ABI,
@@ -117,11 +117,7 @@ export class YourService {
     );
 
     for (const event of events) {
-      console.log('Transfer:', {
-        from: event.args.from,
-        to: event.args.to,
-        value: event.args.value,
-      });
+      console.log('Event:', event);
     }
   }
 }
