@@ -534,7 +534,7 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
    * Fetch all events for a contract in a block range (batched)
    * @param address Contract address
    * @param abi Contract ABI
-   * @param filter Event filter (e.g. contract.filters.Transfer(...))
+   * @param eventNameOrFragment Event filter (e.g. contract.filters.Transfer(...))
    * @param startBlock Start block number (inclusive)
    * @param endBlock End block number (inclusive)
    * @param increment Batch size (default: 1000)
@@ -543,7 +543,7 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
   async getEventsInBlockRange(
     address: string,
     abi: ethers.InterfaceAbi,
-    eventNameOrFragment: string, // Accept event name or fragment
+    eventNameOrFragment: ethers.ContractEventName,
     startBlock: number,
     endBlock: number,
     increment = 1000,
