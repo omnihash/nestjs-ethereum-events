@@ -360,7 +360,10 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
       for (const eventName of eventNames) {
         // ethers v6: getEventTopic is deprecated, use getEvent + topicHash
         const eventFragment = contract.getEvent(eventName);
-        const eventTopic = eventFragment.fragment.topicHash;
+        const eventFilter = {
+          address: address,
+          topics: [eventFragment.fragment.topicHash],
+        };
 
         const handler = async (log: ethers.Log) => {
           try {
@@ -381,9 +384,9 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
           }
         };
 
-        this.provider.on(eventTopic, handler);
+        this.provider.on(eventFilter, handler);
         listeners.push((): void => {
-          this.provider.off(eventTopic, handler);
+          this.provider.off(eventFilter, handler);
         });
       }
 
