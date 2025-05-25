@@ -26,6 +26,7 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
   private keepAliveInterval: number;
   private heartbeatTimer?: NodeJS.Timeout;
   private keepAliveTimer?: NodeJS.Timeout;
+  private reconnectionTimer?: NodeJS.Timeout;
   private isConnected = false;
   private isReconnecting = false;
 
@@ -40,6 +41,7 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
     await this.initializeProvider();
     this.startHeartbeat();
     this.startKeepAlive();
+    this.startPeriodicReconnection();
   }
 
   onModuleDestroy() {
@@ -202,6 +204,21 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
         this.logger.error(`Failed to re-register contract ${address}:`, error);
       }
     }
+  }
+
+  private startPeriodicReconnection() {
+    // Clear any existing timer
+    if (this.reconnectionTimer) {
+      clearInterval(this.reconnectionTimer);
+    }
+
+    // Set up reconnection every 5 minutes (300000 milliseconds)
+    this.reconnectionTimer = setInterval(() => {
+      this.logger.log('Initiating periodic reconnection...');
+      this.isConnected = false;
+      this.reconnectAttempts = 0;
+      this.handleReconnection();
+    }, 300000);
   }
 
   /**
@@ -453,6 +470,10 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
 
     if (this.keepAliveTimer) {
       clearInterval(this.keepAliveTimer);
+    }
+
+    if (this.reconnectionTimer) {
+      clearInterval(this.reconnectionTimer);
     }
 
     this.unregisterAllContracts();
