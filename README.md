@@ -23,12 +23,12 @@ yarn add @omnihash/nestjs-evm-events ethers
 Create a `.env` file in your project root:
 
 ```env
-ETHERS_PROVIDER_URL=https://eth-mainnet.g.alchemy.com/v2/your-api-key
-ETHERS_MAX_RECONNECT_ATTEMPTS=10
-ETHERS_RECONNECT_DELAY=5000
-ETHERS_HEARTBEAT_INTERVAL=30000
-ETHERS_POLLING_INTERVAL=4000
-ETHERS_KEEP_ALIVE_INTERVAL=15000
+EVM_JSON_PROVIDER_URL=https://eth-mainnet.g.alchemy.com/v2/your-api-key
+EVM_MAX_RECONNECT_ATTEMPTS=10
+EVM_RECONNECT_DELAY=5000
+EVM_HEARTBEAT_INTERVAL=30000
+EVM_POLLING_INTERVAL=4000
+EVM_KEEP_ALIVE_INTERVAL=15000
 ```
 
 You can also see `.env.example` for all options.
