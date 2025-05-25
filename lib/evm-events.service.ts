@@ -4,7 +4,7 @@ import {
   OnModuleDestroy,
   OnModuleInit,
 } from '@nestjs/common';
-import { ethers } from 'ethers';
+import { ethers, EventLog } from 'ethers';
 
 import { isString } from 'class-validator';
 import { EthersConfig } from './interfaces/ethers-config.interface';
@@ -547,14 +547,14 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
     startBlock: number,
     endBlock: number,
     increment = 1000,
-  ): Promise<ethers.Log[]> {
+  ): Promise<EventLog[]> {
     while (!this.provider) {
       this.logger.warn('Provider not initialized yet, waiting...');
       await new Promise((resolve) => setTimeout(resolve, 250));
     }
 
     const contract = new ethers.Contract(address, abi, this.provider);
-    const allEvents: ethers.Log[] = [];
+    const allEvents: EventLog[] = [];
     for (let i = startBlock; i <= endBlock; i += increment) {
       const fromBlock = i;
       const toBlock = Math.min(i + increment - 1, endBlock);
@@ -569,7 +569,12 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
           fromBlock,
           toBlock,
         );
-        allEvents.push(...(events as ethers.Log[]));
+        // Filter to only EventLog instances (decoded events)
+        const eventLogs = events.filter(
+          (event): event is EventLog => event instanceof EventLog,
+        );
+
+        allEvents.push(...eventLogs);
       } catch (err) {
         this.logger.error(
           `Failed to fetch events for blocks ${fromBlock}-${toBlock}:`,
