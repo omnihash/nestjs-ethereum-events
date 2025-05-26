@@ -26,6 +26,7 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
   private reconnectDelay: number;
   private heartbeatInterval: number;
   private keepAliveInterval: number;
+  private reconnectionInterval: number;
   private heartbeatTimer?: NodeJS.Timeout;
   private keepAliveTimer?: NodeJS.Timeout;
   private reconnectionTimer?: NodeJS.Timeout;
@@ -37,6 +38,7 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
     this.reconnectDelay = config.reconnectDelay || 5000;
     this.heartbeatInterval = config.heartbeatInterval || 30000; // 30 seconds
     this.keepAliveInterval = config.keepAliveInterval || 15000; // 15 seconds
+    this.reconnectionInterval = config.reconnectionInterval || 1_800_000; // 30 minutes default
   }
 
   /**
@@ -130,10 +132,12 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
    * Manages reconnection state and retries
    */
   private handleReconnection() {
+    // Don't attempt to reconnect if already reconnecting
     if (this.isReconnecting) return;
 
     this.isReconnecting = true;
 
+    // Check if we've reached the maximum reconnection attempts
     if (this.reconnectAttempts >= this.maxReconnectAttempts) {
       this.logger.error(
         'Max reconnection attempts reached. Stopping reconnection.',
@@ -147,9 +151,23 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
       `Attempting to reconnect... (${this.reconnectAttempts}/${this.maxReconnectAttempts})`,
     );
 
+    // If a reconnection is already in progress, we should first ensure all listeners are removed
+    if (this.provider) {
+      try {
+        // Force cleanup of event listeners before reconnection
+        this.provider.removeAllListeners();
+      } catch (error) {
+        this.logger.warn(
+          'Error clearing provider listeners before reconnection:',
+          error,
+        );
+      }
+    }
+
     setTimeout(() => {
       (async () => {
         try {
+          // Create a new provider and setup new event handlers
           await this.initializeProvider();
           this.isReconnecting = false;
         } catch (error) {
@@ -217,11 +235,20 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
     this.logger.log('Re-registering all contracts after reconnection...');
 
     try {
-      // Clear existing listeners
-      this.unregisterAllContracts();
-
-      // Make a copy of registered contracts to avoid concurrent modification issues
+      // Save the list of contracts to re-register
       const contractEntries = Array.from(this.registeredContracts.entries());
+
+      // First completely clear the internal contract tracking state
+      this.registeredContracts.clear();
+
+      // Clear existing listeners more aggressively
+      const removed = this.unregisterAllContracts();
+      this.logger.log(
+        `Removed ${removed} event listeners before re-registering contracts`,
+      );
+
+      // Small delay to ensure event handlers are properly cleaned up before re-registering
+      await new Promise((resolve) => setTimeout(resolve, 100));
 
       // Re-register all contracts (sequentially to avoid race conditions)
       for (const [address, contractConfig] of contractEntries) {
@@ -250,7 +277,7 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
             );
           }
 
-          this.logger.log(`Re-registered contract: ${address}`);
+          this.logger.debug(`Re-registered contract: ${address}`);
         } catch (error) {
           this.logger.error(
             `Failed to re-register contract ${address}:`,
@@ -260,6 +287,10 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
           this.processingEventAddresses.delete(address);
         }
       }
+
+      this.logger.log(
+        `Completed re-registration of ${contractEntries.length} contracts`,
+      );
     } finally {
       this.registrationInProgress = false;
     }
@@ -267,7 +298,8 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Start periodic reconnection timer
-   * Forces a reconnection every 5 minutes to maintain fresh state
+   * Forces a reconnection periodically to maintain fresh state
+   * Default is 30 minutes (1,800,000 milliseconds) to reduce chances of duplicate events
    */
   private startPeriodicReconnection() {
     // Clear any existing timer
@@ -275,13 +307,59 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
       clearInterval(this.reconnectionTimer);
     }
 
-    // Set up reconnection every 5 minutes (300000 milliseconds)
-    this.reconnectionTimer = setInterval(() => {
-      this.logger.log('Initiating periodic reconnection...');
-      this.isConnected = false;
-      this.reconnectAttempts = 0;
-      this.handleReconnection();
-    }, 300000);
+    // Use the class property that was initialized in the constructor
+    // Longer interval helps reduce chances of duplicate events
+    this.logger.log(
+      `Setting up periodic reconnection every ${this.reconnectionInterval / 60000} minutes`,
+    );
+
+    this.reconnectionTimer = setInterval(async () => {
+      // Skip reconnection if already in progress or if registration is happening
+      if (this.isReconnecting || this.registrationInProgress) {
+        this.logger.warn(
+          'Reconnection or registration already in progress, skipping periodic reconnection',
+        );
+        return;
+      }
+
+      this.logger.log(
+        `Initiating periodic reconnection (every ${this.reconnectionInterval / 60000} minutes)...`,
+      );
+
+      // First unregister all contracts and force cleanup
+      try {
+        // First cleanup previous listeners
+        const count = this.unregisterAllContracts();
+        this.logger.log(
+          `Removed ${count} listeners during periodic reconnection`,
+        );
+
+        // Allow a small delay for cleanup to complete
+        await new Promise((resolve) => setTimeout(resolve, 200));
+
+        // Set state for reconnection
+        this.isConnected = false;
+        this.reconnectAttempts = 0;
+
+        // Force garbage collection of old provider if possible
+        if (this.provider && typeof this.provider.destroy === 'function') {
+          try {
+            await (this.provider as any).destroy();
+          } catch (error) {
+            // Ignore error
+          }
+        }
+
+        this.provider = null as any; // Force provider recreation        // Small delay before reconnection
+        await new Promise((resolve) => setTimeout(resolve, 500));
+
+        // Create a brand new provider connection
+        await this.initializeProvider();
+      } catch (error) {
+        this.logger.error('Error during periodic reconnection:', error);
+        this.handleReconnection();
+      }
+    }, this.reconnectionInterval);
   }
 
   /**
@@ -499,7 +577,24 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
       reconnectAttempts: this.reconnectAttempts,
       registeredContracts: this.registeredContracts.size,
       activeListeners: this.listeners.size,
+      reconnectionInterval: this.reconnectionInterval,
     };
+  }
+
+  /**
+   * Set the reconnection interval and restart the reconnection timer
+   * @param intervalMs The new interval in milliseconds (default: 1,800,000 ms / 30 minutes)
+   */
+  setReconnectionInterval(intervalMs: number = 1_800_000) {
+    this.reconnectionInterval = intervalMs;
+    this.logger.log(
+      `Setting reconnection interval to ${intervalMs / 60000} minutes`,
+    );
+
+    // Restart periodic reconnection timer with new interval
+    this.startPeriodicReconnection();
+
+    return this.reconnectionInterval;
   }
 
   /**
@@ -537,6 +632,7 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
     const addresses = Array.from(this.contracts.keys());
     let count = 0;
 
+    // First, clean up individual event listeners from contracts
     addresses.forEach((address) => {
       const listeners = this.listeners.get(address) || [];
       listeners.forEach((off) => {
@@ -552,12 +648,37 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
     // Explicitly remove all listeners from provider
     if (this.provider) {
       try {
+        // First attempt to use removeAllListeners
         this.provider.removeAllListeners();
+
+        // For WebSocketProvider, we need to be more aggressive
+        if (this.provider instanceof ethers.WebSocketProvider) {
+          try {
+            // Try to access the underlying WebSocket
+            const websocket = (this.provider as any).websocket;
+            if (websocket) {
+              // Reset websocket event handlers
+              if (websocket._eventsCount > 0) {
+                websocket.removeAllListeners();
+                this.logger.log('Removed all websocket event handlers');
+              }
+            }
+          } catch (wsError) {
+            this.logger.warn(
+              'Could not access websocket to clean up handlers:',
+              wsError,
+            );
+          }
+
+          // Re-register provider events
+          this.setupWebSocketEventHandlers();
+        }
       } catch (error) {
         this.logger.error('Error removing all listeners from provider:', error);
       }
     }
 
+    // Clear internal state tracking
     this.contracts.clear();
     this.listeners.clear();
 

@@ -28,6 +28,9 @@ export class EvmEventsConfigService {
       keepAliveInterval: parseInt(
         this.configService.get('EVM_KEEP_ALIVE_INTERVAL') ?? '120000',
       ),
+      reconnectionInterval: parseInt(
+        this.configService.get('EVM_RECONNECTION_INTERVAL') ?? '120000',
+      ),
     };
   }
 }

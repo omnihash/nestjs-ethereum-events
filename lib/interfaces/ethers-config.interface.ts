@@ -5,4 +5,5 @@ export interface EthersConfig {
   heartbeatInterval?: number;
   pollingInterval?: number;
   keepAliveInterval?: number;
+  reconnectionInterval?: number; // Interval for periodic reconnection (ms)
 }

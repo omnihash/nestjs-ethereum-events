@@ -1,6 +1,20 @@
 # @omnihash/nestjs-evm-events
 
-A NestJS module for robust Ethereum event listening and contract interaction using [ethers.js](https://docs.ethers.org/).
+A NestJS module for robust Ethereum event listening- Loads configuration from `.env` and sets up the listener service.
+
+**Configuration Options:**
+
+| Environment Variable         | Description                              | Default    |
+| ---------------------------- | ---------------------------------------- | ---------- |
+| `EVM_RPC_PROVIDER_URL`       | WebSocket or HTTP RPC URL                | _required_ |
+| `EVM_MAX_RECONNECT_ATTEMPTS` | Max attempts for reconnection            | 10         |
+| `EVM_RECONNECT_DELAY`        | Delay between reconnection attempts (ms) | 5000       |
+| `EVM_HEARTBEAT_INTERVAL`     | Interval to check connection health (ms) | 30000      |
+| `EVM_POLLING_INTERVAL`       | Polling interval for HTTP providers (ms) | 4000       |
+| `EVM_KEEP_ALIVE_INTERVAL`    | Interval to send keep-alive pings (ms)   | 15000      |
+| `EVM_RECONNECTION_INTERVAL`  | Interval for periodic reconnection (ms)  | 1800000    |
+
+**Note on Reconnection Interval**: The periodic reconnection helps prevent duplicate events by ensuring a clean connection state. The default is set to 30 minutes (1,800,000ms), which balances connection freshness with minimizing disruption.and contract interaction using [ethers.js](https://docs.ethers.org/).
 
 **Note:** This module is actively in development, please **do not** use in production.
 
@@ -29,6 +43,7 @@ EVM_RECONNECT_DELAY=5000
 EVM_HEARTBEAT_INTERVAL=30000
 EVM_POLLING_INTERVAL=4000
 EVM_KEEP_ALIVE_INTERVAL=15000
+EVM_RECONNECTION_INTERVAL=1800000
 ```
 
 You can also see `.env.example` for all options.
@@ -85,7 +100,8 @@ export class AppModule {
 
 - `registerContract(address: string, abi: ethers.InterfaceAbi, callback?: (event) => void): void`  
   Register a contract to listen for all its events.
-
+- `registerSpecificEvents(address: string, abi: ethers.InterfaceAbi, eventNames: string[], callback?: (event) => void): void`  
+  Register specific events from a contract.
 - `getEventsInBlockRange(address: string, abi: ethers.InterfaceAbi, eventNameOrFragment: ethers.ContractEventName, startBlock: number, endBlock: number, increment = 1000): Promise<ethers.EventLog[]>`  
   Fetch all events for a contract in a block range with automatic batching.
 
