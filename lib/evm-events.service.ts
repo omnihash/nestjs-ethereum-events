@@ -570,7 +570,12 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
           toBlock,
         );
 
-        allEvents.push(...events);
+        // Filter to only EventLog instances (decoded events)
+        const eventLogs = events.filter(
+          (event): event is Log => event instanceof Log,
+        );
+
+        allEvents.push(...eventLogs);
       } catch (err) {
         this.logger.error(
           `Failed to fetch events for blocks ${fromBlock}-${toBlock}:`,
