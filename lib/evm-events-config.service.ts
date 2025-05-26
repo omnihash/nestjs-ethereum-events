@@ -11,7 +11,7 @@ export class EvmEventsConfigService {
     // In parseInt(str, radix), radix 10 means decimal (base 10).
     return {
       providerUrl:
-        this.configService.get('EVM_JSON_PROVIDER_URL') ??
+        this.configService.get('EVM_RPC_PROVIDER_URL') ??
         'http://localhost:8545',
       maxReconnectAttempts: parseInt(
         this.configService.get('EVM_MAX_RECONNECT_ATTEMPTS') ?? '20',

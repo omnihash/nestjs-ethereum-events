@@ -23,7 +23,7 @@ yarn add @omnihash/nestjs-evm-events ethers
 Create a `.env` file in your project root:
 
 ```env
-EVM_JSON_PROVIDER_URL=https://eth-mainnet.g.alchemy.com/v2/your-api-key
+EVM_RPC_PROVIDER_URL=https://eth-mainnet.g.alchemy.com/v2/your-api-key
 EVM_MAX_RECONNECT_ATTEMPTS=10
 EVM_RECONNECT_DELAY=5000
 EVM_HEARTBEAT_INTERVAL=30000
