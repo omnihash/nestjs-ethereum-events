@@ -4,7 +4,7 @@ import {
   OnModuleDestroy,
   OnModuleInit,
 } from '@nestjs/common';
-import { ethers, Log } from 'ethers';
+import { ethers, EventLog, Log } from 'ethers';
 
 import { isString } from 'class-validator';
 import { EthersConfig } from './interfaces/ethers-config.interface';
@@ -291,7 +291,7 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
    * @param eventNames Array of event names to listen for
    * @param callback Callback function that will be called for each event
    */
-  registerSpecificEvents(
+  async registerSpecificEvents(
     address: string,
     abi: ethers.InterfaceAbi,
     eventNames: string[],
@@ -302,6 +302,10 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
     ) => void | Promise<void>,
   ) {
     const normalized = address.toLowerCase();
+    while (!this.provider) {
+      this.logger.warn('Provider not initialized yet, waiting...');
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
 
     // Store contract config for re-registration
     this.registeredContracts.set(normalized, {
@@ -547,7 +551,7 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
     startBlock: number,
     endBlock: number,
     increment = 1000,
-  ): Promise<Log[]> {
+  ): Promise<(Log | EventLog)[]> {
     while (!this.provider) {
       this.logger.warn('Provider not initialized yet, waiting...');
       await new Promise((resolve) => setTimeout(resolve, 250));
