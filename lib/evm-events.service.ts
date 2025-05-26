@@ -17,6 +17,8 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
   private contracts = new Map<string, ethers.Contract>();
   private listeners = new Map<string, Array<() => void>>();
   private registeredContracts = new Map<string, RegisteredContract>();
+  private registrationInProgress = false; // Flag to track in-progress registration
+  private processingEventAddresses = new Set<string>(); // Track which addresses are being processed
 
   // Connection management
   private reconnectAttempts = 0;
@@ -84,7 +86,7 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
       this.logger.log('Connected to Ethereum provider');
 
       // Re-register all contracts after reconnection
-      this.reregisterAllContracts();
+      await this.reregisterAllContracts();
     } catch (error) {
       this.logger.error('Failed to connect to Ethereum provider:', error);
       this.isConnected = false;
@@ -202,33 +204,64 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
     }, this.keepAliveInterval);
   }
 
-  private reregisterAllContracts() {
+  private async reregisterAllContracts() {
+    // Check if registration is already in progress to avoid duplicate registrations
+    if (this.registrationInProgress) {
+      this.logger.warn(
+        'Registration already in progress, skipping re-registration',
+      );
+      return;
+    }
+
+    this.registrationInProgress = true;
     this.logger.log('Re-registering all contracts after reconnection...');
 
-    // Clear existing listeners
-    this.unregisterAllContracts();
+    try {
+      // Clear existing listeners
+      this.unregisterAllContracts();
 
-    // Re-register all contracts
-    for (const [address, contractConfig] of this.registeredContracts) {
-      try {
-        if (contractConfig.eventNames) {
-          this.registerSpecificEvents(
-            contractConfig.address,
-            contractConfig.abi,
-            contractConfig.eventNames,
-            contractConfig.callback,
+      // Make a copy of registered contracts to avoid concurrent modification issues
+      const contractEntries = Array.from(this.registeredContracts.entries());
+
+      // Re-register all contracts (sequentially to avoid race conditions)
+      for (const [address, contractConfig] of contractEntries) {
+        if (this.processingEventAddresses.has(address)) {
+          this.logger.warn(
+            `Contract ${address} is already being processed, skipping re-registration`,
           );
-        } else {
-          this.registerContract(
-            contractConfig.address,
-            contractConfig.abi,
-            contractConfig.callback,
-          );
+          continue;
         }
-        this.logger.log(`Re-registered contract: ${address}`);
-      } catch (error) {
-        this.logger.error(`Failed to re-register contract ${address}:`, error);
+
+        try {
+          this.processingEventAddresses.add(address);
+
+          if (contractConfig.eventNames) {
+            await this.registerSpecificEvents(
+              contractConfig.address,
+              contractConfig.abi,
+              contractConfig.eventNames,
+              contractConfig.callback,
+            );
+          } else {
+            await this.registerContract(
+              contractConfig.address,
+              contractConfig.abi,
+              contractConfig.callback,
+            );
+          }
+
+          this.logger.log(`Re-registered contract: ${address}`);
+        } catch (error) {
+          this.logger.error(
+            `Failed to re-register contract ${address}:`,
+            error,
+          );
+        } finally {
+          this.processingEventAddresses.delete(address);
+        }
       }
+    } finally {
+      this.registrationInProgress = false;
     }
   }
 
@@ -498,17 +531,40 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Unregister all contracts
+   * @returns The number of contracts that were unregistered
    */
-  unregisterAllContracts(): void {
+  unregisterAllContracts(): number {
     const addresses = Array.from(this.contracts.keys());
+    let count = 0;
+
     addresses.forEach((address) => {
       const listeners = this.listeners.get(address) || [];
-      listeners.forEach((off) => off());
+      listeners.forEach((off) => {
+        try {
+          off(); // Execute the unregistration callback
+          count++;
+        } catch (error) {
+          this.logger.error(`Error removing listener for ${address}:`, error);
+        }
+      });
     });
+
+    // Explicitly remove all listeners from provider
+    if (this.provider) {
+      try {
+        this.provider.removeAllListeners();
+      } catch (error) {
+        this.logger.error('Error removing all listeners from provider:', error);
+      }
+    }
 
     this.contracts.clear();
     this.listeners.clear();
-    this.logger.log('Unregistered all active contracts');
+
+    this.logger.log(
+      `Unregistered all active contracts (${count} listeners removed)`,
+    );
+    return count;
   }
 
   private cleanup(): void {
