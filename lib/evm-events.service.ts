@@ -420,25 +420,13 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
           this.keepAliveTimer = undefined;
         }
 
-        // Safely unregister all event listeners
-        let count = 0;
-        try {
-          count = this.unregisterAllContracts();
-          this.logger.log(
-            `Removed ${count} listeners during periodic reconnection`,
-          );
-        } catch (error) {
-          if (this.isProviderDestroyedError(error)) {
-            this.logger.debug(
-              'Provider was already destroyed during listener cleanup',
-            );
-          } else {
-            this.logger.error(
-              'Error removing listeners during reconnection:',
-              error,
-            );
-          }
-        }
+        // We're going to entirely skip filter removal here
+        // Instead, just clean our internal state directly
+        this.contracts.clear();
+        this.listeners.clear();
+        this.logger.debug(
+          `Cleared ${this.contracts.size} contracts during periodic reconnection (skipped filter removal)`,
+        );
 
         // Allow a small delay for cleanup to complete
         await new Promise((resolve) => setTimeout(resolve, 200));
@@ -455,6 +443,14 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
         // Now safely destroy the old provider if it existed
         if (oldProvider) {
           try {
+            // First completely remove all event listeners
+            try {
+              // We don't care if this fails - just swallow errors
+              oldProvider.removeAllListeners();
+            } catch (err) {
+              // Silently ignore any errors here
+            }
+
             // First close WebSocket connection if applicable
             if (
               oldProvider instanceof ethers.WebSocketProvider &&
@@ -463,34 +459,31 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
               try {
                 oldProvider.websocket.close();
               } catch (wsError) {
-                // Handle WebSocket close errors gracefully
-                if (this.isProviderDestroyedError(wsError)) {
-                  this.logger.debug('WebSocket already closed');
-                } else {
-                  this.logger.debug('Error closing WebSocket:', wsError);
-                }
+                // We don't care about WebSocket errors during teardown
+                // Just silently ignore them
               }
             }
 
             // Then try to destroy the provider
             if (typeof oldProvider.destroy === 'function') {
-              try {
-                await (oldProvider as any).destroy();
-              } catch (destroyError) {
-                // Specifically handle the UNSUPPORTED_OPERATION error for eth_uninstallFilter
-                if (this.isProviderDestroyedError(destroyError)) {
-                  this.logger.debug('Provider was already being destroyed');
-                } else {
-                  this.logger.debug('Error destroying provider:', destroyError);
-                }
-              }
+              // Use a wrapped Promise with a timeout
+              // This will ensure we don't get stuck waiting for destroy()
+              await Promise.race([
+                (async () => {
+                  try {
+                    await (oldProvider as any).destroy();
+                  } catch (err) {
+                    // Silently ignore any errors during provider destruction
+                    // We're tearing it down anyway
+                  }
+                })(),
+                // Add a timeout to ensure we don't wait for completion
+                new Promise((resolve) => setTimeout(resolve, 100)),
+              ]);
             }
           } catch (error) {
-            // Final fallback catch-all for any other provider cleanup issues
-            this.logger.debug(
-              'Unexpected error during provider cleanup:',
-              error,
-            );
+            // Completely ignore any errors during provider cleanup
+            // We don't care about these errors since we're destroying the provider anyway
           }
         }
 
