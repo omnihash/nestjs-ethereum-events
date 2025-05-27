@@ -797,6 +797,31 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
    * @returns The number of contracts that were unregistered
    */
   unregisterAllContracts(): number {
+    // For periodic reconnection, we'll just track the number of contracts that will be cleared
+    const contractCount = this.contracts.size;
+
+    // During periodic reconnection, it's safer to just clear our internal tracking
+    // without trying to uninstall filters that might already be in an invalid state
+    // First check if we're in a periodic reconnection by checking caller stack trace
+    const isPeriodicReconnection = new Error().stack?.includes(
+      'startPeriodicReconnection',
+    );
+
+    if (isPeriodicReconnection) {
+      this.logger.debug(
+        `Skipping filter uninstallation for ${contractCount} contracts during reconnection`,
+      );
+
+      // Just clear our internal state, don't try to remove listeners from provider
+      // The provider is going to be destroyed anyway
+      this.contracts.clear();
+      this.listeners.clear();
+
+      // Return number of contracts that would have been unregistered
+      return contractCount;
+    }
+
+    // Normal case (not during periodic reconnection)
     const addresses = Array.from(this.contracts.keys());
     let count = 0;
 
