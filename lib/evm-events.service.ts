@@ -129,7 +129,14 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
       });
 
       this.provider.on('error', (error: Error) => {
-        this.logger.error('WebSocket error:', error);
+        if (this.isProviderDestroyedError(error)) {
+          this.logger.debug(
+            'WebSocket error (likely related to provider teardown):',
+            error,
+          );
+        } else {
+          this.logger.error('WebSocket error:', error);
+        }
         this.isConnected = false;
         this.handleReconnection();
       });
