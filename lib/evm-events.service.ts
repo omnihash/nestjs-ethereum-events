@@ -236,11 +236,7 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
         } catch (error) {
           // If we get a "provider destroyed" error, don't try to reconnect since
           // it's likely that a reconnection is already in progress
-          if (
-            error instanceof Error &&
-            error.message &&
-            error.message.includes('provider destroyed')
-          ) {
+          if (this.isProviderDestroyedError(error)) {
             this.logger.debug(
               'Heartbeat skipped - provider is being destroyed or reconnected',
             );
@@ -279,18 +275,14 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
         } catch (error) {
           // If we get a "provider destroyed" error, don't log a warning
           // as it's likely that a reconnection is already in progress
-          if (
-            error instanceof Error &&
-            error.message &&
-            error.message.includes('provider destroyed')
-          ) {
+          if (this.isProviderDestroyedError(error)) {
             this.logger.debug(
               'Keep-alive skipped - provider is being destroyed or reconnected',
             );
             return;
           }
 
-          this.logger.warn('Keep-alive failed:', error);
+          this.logger.debug('Keep-alive failed:', error);
         }
       })();
     }, this.keepAliveInterval);
@@ -375,10 +367,16 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
    * Forces a reconnection periodically to maintain fresh state
    * Default is 30 minutes (1,800,000 milliseconds) to reduce chances of duplicate events
    */
+  /**
+   * Start periodic reconnection timer
+   * Forces a reconnection periodically to maintain fresh state
+   * Default is 30 minutes (1,800,000 milliseconds) to reduce chances of duplicate events
+   */
   private startPeriodicReconnection() {
     // Clear any existing timer
     if (this.reconnectionTimer) {
       clearInterval(this.reconnectionTimer);
+      this.reconnectionTimer = undefined;
     }
 
     // Use the class property that was initialized in the constructor
@@ -400,7 +398,9 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
         `Initiating periodic reconnection (every ${this.reconnectionInterval / 60000} minutes)...`,
       );
 
-      // First unregister all contracts and force cleanup
+      // Set state to prevent concurrent reconnections
+      this.isReconnecting = true;
+
       try {
         // First stop all timers to prevent accessing a destroyed provider
         if (this.heartbeatTimer) {
@@ -413,33 +413,64 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
           this.keepAliveTimer = undefined;
         }
 
-        // First cleanup previous listeners
-        const count = this.unregisterAllContracts();
-        this.logger.log(
-          `Removed ${count} listeners during periodic reconnection`,
-        );
+        // Safely unregister all event listeners
+        let count = 0;
+        try {
+          count = this.unregisterAllContracts();
+          this.logger.log(
+            `Removed ${count} listeners during periodic reconnection`,
+          );
+        } catch (error) {
+          if (this.isProviderDestroyedError(error)) {
+            this.logger.debug(
+              'Provider was already destroyed during listener cleanup',
+            );
+          } else {
+            this.logger.error(
+              'Error removing listeners during reconnection:',
+              error,
+            );
+          }
+        }
 
         // Allow a small delay for cleanup to complete
         await new Promise((resolve) => setTimeout(resolve, 200));
 
-        // Set state for reconnection
+        // Reset connection state
         this.isConnected = false;
         this.reconnectAttempts = 0;
 
-        // Force garbage collection of old provider if possible
-        if (this.provider && typeof this.provider.destroy === 'function') {
+        // Safely destroy the old provider if possible
+        if (this.provider) {
           try {
-            await (this.provider as any).destroy();
+            if (
+              this.provider instanceof ethers.WebSocketProvider &&
+              this.provider.websocket
+            ) {
+              try {
+                this.provider.websocket.close();
+              } catch (wsError) {
+                this.logger.debug('Error closing WebSocket:', wsError);
+              }
+            }
+
+            if (typeof this.provider.destroy === 'function') {
+              await (this.provider as any).destroy();
+            }
           } catch (error) {
-            // Ignore error
+            if (this.isProviderDestroyedError(error)) {
+              this.logger.debug('Provider was already destroyed');
+            } else {
+              this.logger.debug('Error destroying provider:', error);
+            }
           }
+
+          // Set provider to null to ensure no further access attempts
+          this.provider = null as any;
         }
 
-        // Set provider to null to ensure no further access attempts
-        this.provider = null as any;
-
         // Small delay before reconnection
-        await new Promise((resolve) => setTimeout(resolve, 500));
+        await new Promise((resolve) => setTimeout(resolve, 300));
 
         // Create a brand new provider connection
         await this.initializeProvider();
@@ -447,8 +478,12 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
         // Restart the timers with new provider
         this.startHeartbeat();
         this.startKeepAlive();
+
+        // Reset reconnecting flag
+        this.isReconnecting = false;
       } catch (error) {
         this.logger.error('Error during periodic reconnection:', error);
+        this.isReconnecting = false;
         this.handleReconnection();
       }
     }, this.reconnectionInterval);
@@ -701,7 +736,22 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
     const contract = this.contracts.get(normalized);
     if (contract) {
       const listeners = this.listeners.get(normalized) || [];
-      listeners.forEach((off) => off());
+      for (const off of listeners) {
+        try {
+          off();
+        } catch (error) {
+          if (this.isProviderDestroyedError(error)) {
+            this.logger.debug(
+              `Skipping listener removal for ${normalized} - provider already destroyed`,
+            );
+          } else {
+            this.logger.error(
+              `Error removing listener for ${normalized}:`,
+              error,
+            );
+          }
+        }
+      }
       this.contracts.delete(normalized);
       this.listeners.delete(normalized);
     }
@@ -725,17 +775,24 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
     let count = 0;
 
     // First, clean up individual event listeners from contracts
-    addresses.forEach((address) => {
+    for (const address of addresses) {
       const listeners = this.listeners.get(address) || [];
-      listeners.forEach((off) => {
+      for (const off of listeners) {
         try {
           off(); // Execute the unregistration callback
           count++;
         } catch (error) {
-          this.logger.error(`Error removing listener for ${address}:`, error);
+          // Handle provider destroyed errors gracefully
+          if (this.isProviderDestroyedError(error)) {
+            this.logger.debug(
+              `Skipping listener removal for ${address} - provider already destroyed`,
+            );
+          } else {
+            this.logger.error(`Error removing listener for ${address}:`, error);
+          }
         }
-      });
-    });
+      }
+    }
 
     // Explicitly remove all listeners from provider
     if (this.provider) {
@@ -746,7 +803,6 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
         // For WebSocketProvider, we need to be more aggressive
         if (this.provider instanceof ethers.WebSocketProvider) {
           try {
-            // Try to access the underlying WebSocket
             const websocket = (this.provider as any).websocket;
             if (websocket) {
               // Reset websocket event handlers
@@ -756,17 +812,27 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
               }
             }
           } catch (wsError) {
-            this.logger.warn(
-              'Could not access websocket to clean up handlers:',
-              wsError,
-            );
+            if (this.isProviderDestroyedError(wsError)) {
+              this.logger.debug('WebSocket already closed during cleanup');
+            } else {
+              this.logger.warn(
+                'Could not access websocket to clean up handlers:',
+                wsError,
+              );
+            }
           }
-
-          // Re-register provider events
-          this.setupWebSocketEventHandlers();
         }
       } catch (error) {
-        this.logger.error('Error removing all listeners from provider:', error);
+        if (this.isProviderDestroyedError(error)) {
+          this.logger.debug(
+            'Provider already destroyed during listener cleanup',
+          );
+        } else {
+          this.logger.error(
+            'Error removing all listeners from provider:',
+            error,
+          );
+        }
       }
     }
 
@@ -858,5 +924,28 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
       }
     }
     return allEvents;
+  }
+
+  /**
+   * Helper method to detect if an error is related to a destroyed provider
+   * @param error Any error object to check
+   * @returns true if the error is a provider destroyed error
+   */
+  private isProviderDestroyedError(error: unknown): boolean {
+    if (!(error instanceof Error)) return false;
+
+    // Check for the standard error message
+    if (error.message?.includes('provider destroyed')) return true;
+
+    // Check for specific error code
+    const errorWithCode = error as { code?: string };
+    if (errorWithCode.code === 'UNSUPPORTED_OPERATION') return true;
+
+    // Check for short message (ethers.js specific)
+    const errorWithShortMessage = error as { shortMessage?: string };
+    if (errorWithShortMessage.shortMessage?.includes('provider destroyed'))
+      return true;
+
+    return false;
   }
 }
