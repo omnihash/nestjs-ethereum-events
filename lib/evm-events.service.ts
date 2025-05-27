@@ -440,33 +440,51 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
         this.isConnected = false;
         this.reconnectAttempts = 0;
 
-        // Safely destroy the old provider if possible
-        if (this.provider) {
+        // First set the provider reference to a local variable to avoid race conditions
+        const oldProvider = this.provider;
+        // Set provider to null early to ensure any concurrent operations won't use it
+        this.provider = null as any;
+
+        // Now safely destroy the old provider if it existed
+        if (oldProvider) {
           try {
+            // First close WebSocket connection if applicable
             if (
-              this.provider instanceof ethers.WebSocketProvider &&
-              this.provider.websocket
+              oldProvider instanceof ethers.WebSocketProvider &&
+              oldProvider.websocket
             ) {
               try {
-                this.provider.websocket.close();
+                oldProvider.websocket.close();
               } catch (wsError) {
-                this.logger.debug('Error closing WebSocket:', wsError);
+                // Handle WebSocket close errors gracefully
+                if (this.isProviderDestroyedError(wsError)) {
+                  this.logger.debug('WebSocket already closed');
+                } else {
+                  this.logger.debug('Error closing WebSocket:', wsError);
+                }
               }
             }
 
-            if (typeof this.provider.destroy === 'function') {
-              await (this.provider as any).destroy();
+            // Then try to destroy the provider
+            if (typeof oldProvider.destroy === 'function') {
+              try {
+                await (oldProvider as any).destroy();
+              } catch (destroyError) {
+                // Specifically handle the UNSUPPORTED_OPERATION error for eth_uninstallFilter
+                if (this.isProviderDestroyedError(destroyError)) {
+                  this.logger.debug('Provider was already being destroyed');
+                } else {
+                  this.logger.debug('Error destroying provider:', destroyError);
+                }
+              }
             }
           } catch (error) {
-            if (this.isProviderDestroyedError(error)) {
-              this.logger.debug('Provider was already destroyed');
-            } else {
-              this.logger.debug('Error destroying provider:', error);
-            }
+            // Final fallback catch-all for any other provider cleanup issues
+            this.logger.debug(
+              'Unexpected error during provider cleanup:',
+              error,
+            );
           }
-
-          // Set provider to null to ensure no further access attempts
-          this.provider = null as any;
         }
 
         // Small delay before reconnection
@@ -738,6 +756,7 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
       const listeners = this.listeners.get(normalized) || [];
       for (const off of listeners) {
         try {
+          // Wrap the off() call in a try/catch to handle provider destroyed errors
           off();
         } catch (error) {
           if (this.isProviderDestroyedError(error)) {
@@ -797,28 +816,60 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
     // Explicitly remove all listeners from provider
     if (this.provider) {
       try {
-        // First attempt to use removeAllListeners
-        this.provider.removeAllListeners();
+        // Check if provider is still valid before attempting to remove listeners
+        // This can help avoid the "provider destroyed" errors
+        let providerValid = true;
+        try {
+          // Quick check if provider is still responsive
+          if (typeof this.provider.getNetwork === 'function') {
+            // Just access a property - don't need to await the actual network call
+            // eslint-disable-next-line @typescript-eslint/unbound-method
+            const _ = this.provider.getNetwork;
+          }
+        } catch (checkError) {
+          if (this.isProviderDestroyedError(checkError)) {
+            this.logger.debug(
+              'Provider already destroyed, skipping listener cleanup',
+            );
+            providerValid = false;
+          }
+        }
 
-        // For WebSocketProvider, we need to be more aggressive
-        if (this.provider instanceof ethers.WebSocketProvider) {
+        if (providerValid) {
+          // First attempt to use removeAllListeners
           try {
-            const websocket = (this.provider as any).websocket;
-            if (websocket) {
-              // Reset websocket event handlers
-              if (websocket._eventsCount > 0) {
-                websocket.removeAllListeners();
-                this.logger.log('Removed all websocket event handlers');
-              }
-            }
-          } catch (wsError) {
-            if (this.isProviderDestroyedError(wsError)) {
-              this.logger.debug('WebSocket already closed during cleanup');
+            this.provider.removeAllListeners();
+          } catch (removeError) {
+            if (this.isProviderDestroyedError(removeError)) {
+              this.logger.debug('Provider destroyed while removing listeners');
             } else {
-              this.logger.warn(
-                'Could not access websocket to clean up handlers:',
-                wsError,
-              );
+              throw removeError; // Re-throw non-destroyed errors
+            }
+          }
+
+          // For WebSocketProvider, we need to be more aggressive
+          if (this.provider instanceof ethers.WebSocketProvider) {
+            try {
+              const websocket = (this.provider as any).websocket;
+              if (
+                websocket &&
+                typeof websocket.removeAllListeners === 'function'
+              ) {
+                // Reset websocket event handlers
+                if (websocket._eventsCount > 0) {
+                  websocket.removeAllListeners();
+                  this.logger.log('Removed all websocket event handlers');
+                }
+              }
+            } catch (wsError) {
+              if (this.isProviderDestroyedError(wsError)) {
+                this.logger.debug('WebSocket already closed during cleanup');
+              } else {
+                this.logger.warn(
+                  'Could not access websocket to clean up handlers:',
+                  wsError,
+                );
+              }
             }
           }
         }
@@ -938,13 +989,20 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
     if (error.message?.includes('provider destroyed')) return true;
 
     // Check for specific error code
-    const errorWithCode = error as { code?: string };
-    if (errorWithCode.code === 'UNSUPPORTED_OPERATION') return true;
+    const errorWithCode = error as { code?: string; operation?: string };
+    if (errorWithCode.code === 'UNSUPPORTED_OPERATION') {
+      // If it's specifically the eth_uninstallFilter operation, definitely a provider destroyed error
+      if (errorWithCode.operation === 'eth_uninstallFilter') return true;
+      return true;
+    }
 
     // Check for short message (ethers.js specific)
     const errorWithShortMessage = error as { shortMessage?: string };
     if (errorWithShortMessage.shortMessage?.includes('provider destroyed'))
       return true;
+
+    // Check for cancelled request
+    if (error.message?.includes('cancelled request')) return true;
 
     return false;
   }
