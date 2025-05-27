@@ -64,6 +64,24 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
    */
   private async initializeProvider() {
     try {
+      // Make sure any existing provider is cleaned up
+      if (this.provider) {
+        try {
+          if (
+            this.provider instanceof ethers.WebSocketProvider &&
+            this.provider.websocket
+          ) {
+            this.provider.websocket.close();
+          }
+
+          if (typeof this.provider.destroy === 'function') {
+            await (this.provider as any).destroy();
+          }
+        } catch (error) {
+          this.logger.debug('Error cleaning up old provider:', error);
+        }
+      }
+
       // Determine provider type based on URL
       if (
         this.config.providerUrl.startsWith('ws://') ||
@@ -151,7 +169,18 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
       `Attempting to reconnect... (${this.reconnectAttempts}/${this.maxReconnectAttempts})`,
     );
 
-    // If a reconnection is already in progress, we should first ensure all listeners are removed
+    // First stop all timers to prevent accessing a destroyed provider
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = undefined;
+    }
+
+    if (this.keepAliveTimer) {
+      clearInterval(this.keepAliveTimer);
+      this.keepAliveTimer = undefined;
+    }
+
+    // If a provider exists, we should first ensure all listeners are removed
     if (this.provider) {
       try {
         // Force cleanup of event listeners before reconnection
@@ -169,6 +198,11 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
         try {
           // Create a new provider and setup new event handlers
           await this.initializeProvider();
+
+          // Restart the timers with new provider
+          this.startHeartbeat();
+          this.startKeepAlive();
+
           this.isReconnecting = false;
         } catch (error) {
           this.logger.error('Reconnection failed:', error);
@@ -184,15 +218,35 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
    * Periodically checks connection by getting latest block number
    */
   private startHeartbeat() {
+    // Clear existing timer if any
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = undefined;
+    }
+
     this.heartbeatTimer = setInterval(() => {
       void (async () => {
         try {
-          if (!this.isConnected) return;
+          // Skip heartbeat if not connected or provider is null
+          if (!this.isConnected || !this.provider) return;
 
           // Simple heartbeat check - get latest block number
           await this.provider.getBlockNumber();
           this.logger.debug('Heartbeat successful');
         } catch (error) {
+          // If we get a "provider destroyed" error, don't try to reconnect since
+          // it's likely that a reconnection is already in progress
+          if (
+            error instanceof Error &&
+            error.message &&
+            error.message.includes('provider destroyed')
+          ) {
+            this.logger.debug(
+              'Heartbeat skipped - provider is being destroyed or reconnected',
+            );
+            return;
+          }
+
           this.logger.warn('Heartbeat failed:', error);
           this.isConnected = false;
           this.handleReconnection();
@@ -206,16 +260,36 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
    * Periodically sends lightweight eth_chainId requests
    */
   private startKeepAlive() {
+    // Clear existing timer if any
+    if (this.keepAliveTimer) {
+      clearInterval(this.keepAliveTimer);
+      this.keepAliveTimer = undefined;
+    }
+
     // Send periodic keep-alive requests to prevent connection timeout
     this.keepAliveTimer = setInterval(() => {
       void (async () => {
         try {
-          if (!this.isConnected) return;
+          // Skip keep-alive if not connected or provider is null
+          if (!this.isConnected || !this.provider) return;
 
           // Use a lightweight call to keep connection active
           await this.provider.send('eth_chainId', []);
           this.logger.debug('Keep-alive ping sent');
         } catch (error) {
+          // If we get a "provider destroyed" error, don't log a warning
+          // as it's likely that a reconnection is already in progress
+          if (
+            error instanceof Error &&
+            error.message &&
+            error.message.includes('provider destroyed')
+          ) {
+            this.logger.debug(
+              'Keep-alive skipped - provider is being destroyed or reconnected',
+            );
+            return;
+          }
+
           this.logger.warn('Keep-alive failed:', error);
         }
       })();
@@ -328,6 +402,17 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
 
       // First unregister all contracts and force cleanup
       try {
+        // First stop all timers to prevent accessing a destroyed provider
+        if (this.heartbeatTimer) {
+          clearInterval(this.heartbeatTimer);
+          this.heartbeatTimer = undefined;
+        }
+
+        if (this.keepAliveTimer) {
+          clearInterval(this.keepAliveTimer);
+          this.keepAliveTimer = undefined;
+        }
+
         // First cleanup previous listeners
         const count = this.unregisterAllContracts();
         this.logger.log(
@@ -350,11 +435,18 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
           }
         }
 
-        this.provider = null as any; // Force provider recreation        // Small delay before reconnection
+        // Set provider to null to ensure no further access attempts
+        this.provider = null as any;
+
+        // Small delay before reconnection
         await new Promise((resolve) => setTimeout(resolve, 500));
 
         // Create a brand new provider connection
         await this.initializeProvider();
+
+        // Restart the timers with new provider
+        this.startHeartbeat();
+        this.startKeepAlive();
       } catch (error) {
         this.logger.error('Error during periodic reconnection:', error);
         this.handleReconnection();
