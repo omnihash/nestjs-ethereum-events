@@ -16,7 +16,7 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
   private provider!: ethers.JsonRpcProvider | ethers.WebSocketProvider;
   private contracts = new Map<string, ethers.Contract>();
   private listeners = new Map<string, Array<() => void>>();
-  private registeredContracts = new Map<string, RegisteredContract>();
+  private _registeredContracts = new Map<string, RegisteredContract>();
   private registrationInProgress = false; // Flag to track in-progress registration
   private processingEventAddresses = new Set<string>(); // Track which addresses are being processed
 
@@ -56,6 +56,10 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
    */
   onModuleDestroy() {
     this.cleanup();
+  }
+
+  get registeredContracts(): string[] {
+    return [...this._registeredContracts.keys()];
   }
 
   /**
@@ -309,10 +313,10 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
 
     try {
       // Save the list of contracts to re-register
-      const contractEntries = Array.from(this.registeredContracts.entries());
+      const contractEntries = Array.from(this._registeredContracts.entries());
 
       // First completely clear the internal contract tracking state
-      this.registeredContracts.clear();
+      this._registeredContracts.clear();
 
       // Clear existing listeners more aggressively
       const removed = this.unregisterAllContracts();
@@ -531,7 +535,7 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
     }
 
     // Store contract config for re-registration
-    this.registeredContracts.set(normalized, {
+    this._registeredContracts.set(normalized, {
       address,
       abi,
       callback,
@@ -564,7 +568,7 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
     }
 
     // Store contract config for re-registration
-    this.registeredContracts.set(normalized, {
+    this._registeredContracts.set(normalized, {
       address,
       abi,
       callback,
@@ -720,7 +724,7 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
       isConnected: this.isConnected,
       isReconnecting: this.isReconnecting,
       reconnectAttempts: this.reconnectAttempts,
-      registeredContracts: this.registeredContracts.size,
+      _registeredContracts: this._registeredContracts.size,
       activeListeners: this.listeners.size,
       reconnectionInterval: this.reconnectionInterval,
     };
@@ -776,7 +780,7 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
     }
 
     // Remove from registered contracts (prevents re-registration)
-    const wasRegistered = this.registeredContracts.delete(normalized);
+    const wasRegistered = this._registeredContracts.delete(normalized);
 
     if (wasRegistered) {
       this.logger.log(`Unregistered contract: ${address}`);
@@ -936,7 +940,7 @@ export class EvmEventsService implements OnModuleInit, OnModuleDestroy {
     }
 
     this.unregisterAllContracts();
-    this.registeredContracts.clear();
+    this._registeredContracts.clear();
 
     if (this.provider instanceof ethers.WebSocketProvider) {
       this.provider.websocket.close();
