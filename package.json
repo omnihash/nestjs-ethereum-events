@@ -1,6 +1,6 @@
 {
   "name": "@omnihash/nestjs-evm-events",
-  "version": "1.0.31",
+  "version": "1.1.0",
   "description": "A NestJS module for robust Ethereum event listening and contract interaction using ethers.js",
   "author": "Omnihash",
   "license": "MIT",

@@ -2,8 +2,6 @@
 
 A NestJS module for robust Ethereum event listening.
 
-**Note:** This module is actively in development, please **do not** use in production.
-
 ---
 
 ## Installation
